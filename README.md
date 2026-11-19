@@ -47,6 +47,22 @@ Automated CI checks will be required before merging.
 
 Three students: Anaëlle POLLART, Manon AUBEL and Grégoire ALPEROVITCH.
 
-## Status
 
-Project setup in progress.
+## Continuous integration
+
+The CI workflow runs automatically on pull requests targeting
+`dev`, `staging`, or `main`.
+
+It can also be started manually with `workflow_dispatch`.
+
+The workflow runs:
+- Automated tests with pytest
+- Static code checks with Ruff
+- Docker image build
+- Container smoke test using a deterministic test model
+
+The CI model is only used for testing. Production will load
+the approved MLflow champion model.
+
+Staging, production deployment and continuous training
+workflows will be added in later project phases.
