@@ -1,0 +1,38 @@
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# environment variables
+.env
+.env.*
+!.env.example
+
+# editors
+.vscode/
+.idea/
+
+# system files
+.DS_Store
+Thumbs.db
+
+# mlflow
+mlruns/
+mlartifacts/
+artifacts/
+*.pkl
+*.joblib
+
+# dvc
+.dvc/cache/
+.dvc/tmp/
+.dvc/config.local
+
+# logs
+*.log
