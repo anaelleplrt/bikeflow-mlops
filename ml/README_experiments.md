@@ -85,23 +85,22 @@ python -m ml.promote --data-version v2 --run-id <baseline run id>
 
 ## Results
 
-Official runs on DagsHub (to be completed with the real run IDs and versions):
+Official runs on DagsHub, 20 November 2026, all from Git commit `007029d`
+(`git_dirty=false`), in this order:
 
-| Run | Data | Validation MAE | Final MAE | Naive MAE | Decision | Registry version |
+| Training run | Data | Validation MAE | Final MAE | Naive MAE | Decision (promotion run) | Registry |
 | --- | --- | --- | --- | --- | --- | --- |
-| baseline | v1 | | | | | |
-| candidate | v1 | | | | | |
-| candidate | v2 | | | | | |
-| baseline | v2 | | | | | |
+| `baseline-v1` `7e8f86df` | v1 | 53.60 | 102.75 | 110.35 | rejected: quality floor 93.80 (`8b4be11f`) | - |
+| `candidate-v1` `116337b3` | v1 | 33.58 | 90.04 | 110.35 | promoted: initial champion (`9793e133`) | version 1 |
+| `candidate-v2` `623485b7` | v2 | 43.04 | 51.42 | 94.91 | promoted: 51.42 <= 85.54, champion v1 at 90.04 (`c655dc31`) | version 2 |
+| `baseline-v2` `578cb394` | v2 | 111.29 | 91.43 | 94.91 | rejected: quality floor 80.67, champion kept (`2b5b0e35`) | - |
 
-Expected outcome, from a local dry run with the same code:
+Current registry state: alias `champion` -> `bikeflow` version 2
+(tags `approved=true`, `dataset_version=v2`, `source_run_id=623485b7...`).
+Version 1 stays in the registry as the previous approved version for rollback.
 
-| Run | Data | Validation MAE | Final MAE | Decision |
-| --- | --- | --- | --- | --- |
-| baseline | v1 | 53.6 | 102.8 | rejected: quality floor (93.8) |
-| candidate | v1 | 33.6 | 90.0 | promoted: initial champion |
-| candidate | v2 | 43.0 | 51.4 | promoted: -43% vs champion |
-| baseline | v2 | 111.3 | 91.4 | rejected: quality floor (80.7) |
+These runs demonstrate the initial release (version 1), a v2 retraining, a
+promotion (version 1 -> 2) and two rejections where the champion is retained.
 
 ## Evidence behind the production model
 
