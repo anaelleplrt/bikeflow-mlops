@@ -14,6 +14,12 @@ DOI: 10.1007/s13748-013-0040-3.
 The source README requests citation when using the dataset
 in publications.
 
+License: Creative Commons Attribution 4.0 (CC BY 4.0), as stated on the
+UCI dataset page.
+
+Downloaded snapshot: `bike+sharing+dataset.zip` from the UCI page.
+SHA256: `b70182d0d0508e9abbb79306ce5c0cec34869000f8220175ac83d11dbe845401`
+
 ## Dataset
 
 We use hour.csv, containing 17,379 hourly observations.
@@ -25,7 +31,16 @@ mnth, hr, weekday, workingday, weathersit,
 temp, hum, windspeed.
 
 We exclude casual and registered to prevent target leakage.
-We also exclude instant and use dteday only for splitting.
+We also exclude instant.
+
+dteday is used for the chronological splits. The model also uses
+yr = year - 2011, derived from dteday at training time (it is not stored in
+the snapshots). See ml/README_experiments.md for the reason.
+
+The data contract (ml/data.py) checks columns, missing values, value
+ranges, integer non-negative target, dates, duplicates, row counts,
+the DVC hash of each version and the train / validation / final
+evaluation separation before any training.
 
 ## Data versions
 
