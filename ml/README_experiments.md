@@ -1,127 +1,125 @@
-# BikeFlow - Experiments and model choice
+# BikeFlow - Experiments
 
-## Tracking server
+## MLflow
 
-All runs and the Model Registry live on a shared MLflow server hosted by DagsHub:
+We use the MLflow server of DagsHub (tracking + model registry):
 
-    https://dagshub.com/manonaubel94-stack/bikeflow-mlops.mlflow
+https://dagshub.com/manonaubel94-stack/bikeflow-mlops.mlflow
 
-- Experiment: `bikeflow`
-- Registered model: `bikeflow`
-- Production alias: `champion`
+- experiment: bikeflow
+- registered model: bikeflow
+- production alias: champion
 
-Credentials are passed through environment variables (`MLFLOW_TRACKING_URI`,
-`MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`). They are stored in a
-local `.env` file (ignored by Git) and in GitHub secrets, never in the code.
+The MLflow URI, username and token are in a local .env file
+(not in Git) and will be added as GitHub secrets.
 
-## Primary metric
+## Metric
 
-**MAE (mean absolute error), in bikes per hour. Lower is better.**
+Main metric: MAE (mean absolute error). Lower is better.
 
-The web app shows a number of rentals for a given hour. MAE is the average
-number of bikes the prediction is off by, so it is directly readable by a user
-or an operator planning bike availability. It is also less sensitive than RMSE
-to a few extreme hours. RMSE and R² are logged as secondary metrics.
+The app predicts a number of bike rentals for one hour, so the MAE
+is easy to understand: it is the average number of bikes the
+prediction is wrong by. We also log RMSE and R2.
 
-## Evaluation design
+## Splits
 
-| Split | v1 | v2 | Use |
-| --- | --- | --- | --- |
-| Training | Jan-Sep 2011 | Jan 2011-Jun 2012 | fitting |
-| Validation | Oct-Dec 2011 | Jul-Sep 2012 | model choice and settings |
-| Final evaluation | Oct-Dec 2012 | Oct-Dec 2012 | quality gates only |
+v1: train Jan-Sep 2011, validation Oct-Dec 2011
+v2: train Jan 2011-Jun 2012, validation Jul-Sep 2012
+Final evaluation (same for both): Oct-Dec 2012, 2168 rows
 
-1. Each model is fitted on the training split and scored on the validation
-   split. Model types, features and hyperparameters are chosen here.
-2. The final model is refitted with the same settings on training +
-   validation, so that it learns from the most recent months.
-3. The final model is scored on the final evaluation split
-   (`data/evaluation/test.csv`). Champion and candidate are always compared on
-   these same 2,168 rows, which neither model has seen during fitting.
+- We compare models and choose settings on the validation set.
+- Then we train the final model again on train + validation with
+  the same settings, so it also learns the most recent months.
+- The final evaluation set is only used for the quality gates.
+  Champion and candidate are always compared on the same rows.
 
 ## Models
 
-| Name | Model | Purpose |
-| --- | --- | --- |
-| `baseline` | One-hot encoding of month, hour, weekday and weather + Ridge regression (`alpha=1.0`) | simple reference |
-| `candidate` | HistGradientBoostingRegressor on log(1 + rentals), `learning_rate=0.05`, `max_iter=500`, `max_leaf_nodes=31` | tuned model |
+- baseline: Ridge regression with one-hot encoding of month, hour,
+  weekday and weather (alpha = 1.0)
+- candidate: HistGradientBoostingRegressor trained on log(1 + cnt)
+  (learning_rate = 0.05, max_iter = 500, max_leaf_nodes = 31)
 
-Features: `mnth`, `hr`, `weekday`, `workingday`, `weathersit`, `temp`, `hum`,
-`windspeed`, and `yr` (years since 2011, derived from `dteday`).
+Features: mnth, hr, weekday, workingday, weathersit, temp, hum,
+windspeed and yr (year - 2011, computed from dteday).
 
-## Quality gates (defined in `ml/gates.py`)
+## Quality gates
 
-1. **Quality floor**: the candidate MAE must be at most 85% of the MAE of a
-   naive predictor (average rentals per hour of day, fitted on the same data).
-2. **Minimum improvement**: when a champion exists, the candidate MAE must be
-   at least 5% lower than the champion MAE on the same rows.
-3. **Retraining rule** (continuous training): retrain when a new dataset
-   version arrives, or when the champion MAE degrades by more than 10% compared
-   with the MAE recorded at promotion.
+They are in ml/gates.py.
 
-A candidate that fails a gate is not registered and the champion is kept. Every
-decision is logged as a `promotion-<version>` run with a
-`promotion_decision.json` artifact.
+1. Quality floor: the MAE must be at most 85% of the MAE of a
+   naive model (mean rentals per hour of the day).
+2. Minimum improvement: if there is already a champion, the new
+   model must have a MAE at least 5% lower.
+3. Retraining rule (for continuous training): we retrain when there
+   is a new dataset version, or when the champion MAE gets more
+   than 10% worse than when it was promoted.
 
-## How to reproduce
+If a model fails a gate, it is not registered and the champion
+stays the same. Each decision is saved in MLflow as a
+"promotion-v1" or "promotion-v2" run with a promotion_decision.json
+file.
 
-```bash
-set -a && source .env && set +a
+## Commands
 
-# v1
-git checkout data-v1 -- data/current.dvc && dvc pull
-python -m ml.train --data-version v1 --model baseline
-python -m ml.promote --data-version v1 --run-id <baseline run id>
-python -m ml.train --data-version v1 --model candidate
-python -m ml.promote --data-version v1 --run-id <candidate run id>
+    set -a && source .env && set +a
 
-# v2
-git checkout HEAD -- data/current.dvc && dvc pull
-python -m ml.train --data-version v2 --model candidate
-python -m ml.promote --data-version v2 --run-id <candidate run id>
-python -m ml.train --data-version v2 --model baseline
-python -m ml.promote --data-version v2 --run-id <baseline run id>
-```
+    git checkout data-v1 -- data/current.dvc && dvc pull
+    python -m ml.train --data-version v1 --model baseline
+    python -m ml.promote --data-version v1 --run-id <run id>
+    python -m ml.train --data-version v1 --model candidate
+    python -m ml.promote --data-version v1 --run-id <run id>
+
+    git checkout HEAD -- data/current.dvc && dvc pull
+    python -m ml.train --data-version v2 --model candidate
+    python -m ml.promote --data-version v2 --run-id <run id>
+    python -m ml.train --data-version v2 --model baseline
+    python -m ml.promote --data-version v2 --run-id <run id>
 
 ## Results
 
-Official runs on DagsHub, 20 November 2026, all from Git commit `007029d`
-(`git_dirty=false`), in this order:
+Runs done on 20 November 2026 from commit 007029d.
 
-| Training run | Data | Validation MAE | Final MAE | Naive MAE | Decision (promotion run) | Registry |
-| --- | --- | --- | --- | --- | --- | --- |
-| `baseline-v1` `7e8f86df` | v1 | 53.60 | 102.75 | 110.35 | rejected: quality floor 93.80 (`8b4be11f`) | - |
-| `candidate-v1` `116337b3` | v1 | 33.58 | 90.04 | 110.35 | promoted: initial champion (`9793e133`) | version 1 |
-| `candidate-v2` `623485b7` | v2 | 43.04 | 51.42 | 94.91 | promoted: 51.42 <= 85.54, champion v1 at 90.04 (`c655dc31`) | version 2 |
-| `baseline-v2` `578cb394` | v2 | 111.29 | 91.43 | 94.91 | rejected: quality floor 80.67, champion kept (`2b5b0e35`) | - |
+baseline v1 (run 7e8f86df)
+- validation MAE 53.60, final MAE 102.75, naive MAE 110.35
+- rejected: above the quality floor (93.80)
 
-Current registry state: alias `champion` -> `bikeflow` version 2
-(tags `approved=true`, `dataset_version=v2`, `source_run_id=623485b7...`).
-Version 1 stays in the registry as the previous approved version for rollback.
+candidate v1 (run 116337b3)
+- validation MAE 33.58, final MAE 90.04
+- promoted: first champion, registry version 1
 
-These runs demonstrate the initial release (version 1), a v2 retraining, a
-promotion (version 1 -> 2) and two rejections where the champion is retained.
+candidate v2 (run 623485b7)
+- validation MAE 43.04, final MAE 51.42, naive MAE 94.91
+- promoted: 51.42 is lower than 85.54 (champion 90.04 minus 5%)
+- registry version 2
 
-## Evidence behind the production model
+baseline v2 (run 578cb394)
+- validation MAE 111.29, final MAE 91.43
+- rejected: above the quality floor (80.67), champion kept
 
-The production champion is the v2 gradient boosting candidate. On the same
-final evaluation rows it reduces the MAE of the v1 champion by about 43%, and
-it is the only v2 model that passes the quality floor.
+So the current champion is version 2. Version 1 is still in the
+registry, so we can go back to it (rollback).
 
-## Development notes (transparency)
+## Why version 2 is the production model
 
-The gates above and the model settings were written before any official run.
-During development, local dry runs scored the final evaluation split, which
-showed that no model passed the quality floor. Two changes followed. Both are
-justified by the validation split, not by final evaluation scores:
+It has the lowest MAE on the final evaluation set (51.42 against
+90.04 for version 1, about 43% better) and it is the only v2 model
+that passes the quality floor.
 
-1. **Refit on training + validation.** This is standard practice for time
-   series with a trend: the final model should learn from the most recent data.
-2. **Add the `yr` feature.** Demand grows strongly between 2011 and 2012. On
-   the v2 validation split (Jul-Sep 2012), adding `yr` lowers the candidate MAE
-   from 105.1 to 43.0 and the baseline MAE from 122.8 to 111.3.
+## Notes
 
-The gate values (85% floor, 5% improvement, 10% degradation) were not changed.
+The gate values were chosen before the official runs. During
+development we tested the scripts locally and saw that no model
+passed the quality floor on the final evaluation set. We made two
+changes, and we justified both with the validation set:
 
-**Known limitation:** `yr` only takes the values 0 and 1 in the data. For 2013
-and later, the tree model predicts 2012 demand levels.
+- train the final model on train + validation (the data has a
+  trend, so the most recent months matter)
+- add the yr feature: rentals grew a lot between 2011 and 2012.
+  On the v2 validation set, the candidate MAE goes from 105.1 to
+  43.0 with yr (baseline: 122.8 to 111.3)
+
+We did not change the gate values.
+
+Limitation: yr is only 0 or 1 in our data, so for 2013 and later
+the model will predict 2012 levels.
