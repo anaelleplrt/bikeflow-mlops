@@ -44,6 +44,7 @@ class FakeModel:
 
 def valid_payload():
     return {
+        "year": 2012,
         "month": 6,
         "hour": 8,
         "weekday": 1,
@@ -81,6 +82,7 @@ def test_prediction_with_model(hour):
     ("month", 13),
     ("humidity_pct", 101),
     ("weather_code", 5),
+    ("year", 2010),
 ])
 def test_invalid_input(field, value):
     payload = valid_payload()

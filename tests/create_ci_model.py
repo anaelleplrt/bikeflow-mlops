@@ -12,6 +12,7 @@ features = pd.DataFrame([{
     "temp": 22 / 41,
     "hum": 0.5,
     "windspeed": 10 / 67,
+    "yr": 1,
 }])
 
 model = DummyRegressor(strategy="constant", constant=123)
