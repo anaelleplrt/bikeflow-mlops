@@ -34,7 +34,7 @@ jobs:
         run: python -m pytest -q
 
       - name: Check code
-        run: python -m ruff check app tests
+        run: python -m ruff check app tests ml
 
       - name: Build Docker image
         run: docker build -t bikeflow:ci .
