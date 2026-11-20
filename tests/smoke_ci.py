@@ -25,6 +25,7 @@ with urlopen(f"{base_url}/model-info") as response:
 
 
 payload = {
+    "year": 2012,
     "month": 6,
     "hour": 8,
     "weekday": 1,

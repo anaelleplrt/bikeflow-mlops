@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class PredictionInput(BaseModel):
+    year: int = Field(ge=2011, le=2100)
     month: int = Field(ge=1, le=12)
     hour: int = Field(ge=0, le=23)
     weekday: int = Field(ge=0, le=6)
@@ -28,6 +29,7 @@ def to_features(data):
         "temp": data.temperature_c / 41,
         "hum": data.humidity_pct / 100,
         "windspeed": data.wind_kmh / 67,
+        "yr": data.year - 2011,
     }])
 
 
@@ -42,6 +44,7 @@ async def lifespan(app):
         model = joblib.load(path)
 
         sample = PredictionInput(
+            year=2012,
             month=6,
             hour=8,
             weekday=1,
