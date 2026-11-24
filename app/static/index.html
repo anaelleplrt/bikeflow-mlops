@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BikeFlow · Prévision de la demande de vélos</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f3ef;
+    --surface-1: #fcfcfb;
+    --border: #e2e1dc;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7a7974;
+    --grid: #e9e8e3;
+    --series-1: #2a78d6;
+    --series-1-strong: #184f95;
+    --accent: #2a78d6;
+    --warn-bg: #fff4d6;
+    --warn-ink: #6b4a00;
+    --error-ink: #b42323;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-0: #121211;
+      --surface-1: #1a1a19;
+      --border: #2e2e2c;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8e86;
+      --grid: #2a2a28;
+      --series-1: #3987e5;
+      --series-1-strong: #9ec5f4;
+      --accent: #5598e7;
+      --warn-bg: #3a2e10;
+      --warn-ink: #f3d68a;
+      --error-ink: #f08a8a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--surface-0);
+    color: var(--text-primary);
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between;
+    gap: 8px 24px; padding: 20px 24px 12px; max-width: 1120px; margin: 0 auto;
+  }
+  header h1 { margin: 0; font-size: 22px; }
+  header p { margin: 2px 0 0; color: var(--text-secondary); }
+  .model-badge {
+    font-size: 13px; color: var(--text-secondary); padding: 4px 10px;
+    border: 1px solid var(--border); border-radius: 999px; background: var(--surface-1);
+  }
+  .model-badge strong { color: var(--text-primary); }
+  main {
+    display: grid; grid-template-columns: 320px 1fr; gap: 20px;
+    max-width: 1120px; margin: 0 auto; padding: 0 24px 32px;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  label { display: block; font-size: 13px; color: var(--text-secondary); margin: 12px 0 4px; }
+  input, select {
+    width: 100%; font: inherit; color: var(--text-primary); background: var(--surface-0);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px;
+  }
+  input[type="range"] { padding: 0; accent-color: var(--accent); background: none; border: 0; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .check { display: flex; gap: 8px; align-items: center; margin-top: 12px; font-size: 13px; color: var(--text-secondary); }
+  .check input { width: auto; }
+  .range-value { float: right; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--surface-0); color: var(--text-primary); padding: 6px 10px;
+  }
+  button.primary { width: 100%; margin-top: 16px; background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 9px; }
+  .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; }
+  .examples button { font-size: 12px; }
+  .derived { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+  .results { display: grid; gap: 20px; align-content: start; }
+  .headline { display: flex; flex-wrap: wrap; gap: 8px 40px; align-items: flex-end; }
+  .hero { font-size: 52px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+  .hero-unit { font-size: 15px; color: var(--text-secondary); margin-top: 6px; }
+  .stat { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat-label { font-size: 13px; color: var(--text-secondary); }
+  .notice { border-radius: 8px; padding: 8px 12px; font-size: 13px; background: var(--warn-bg); color: var(--warn-ink); margin-top: 14px; }
+  .error { color: var(--error-ink); font-size: 13px; margin-top: 10px; }
+  .chart-wrap { position: relative; }
+  svg { display: block; width: 100%; height: auto; }
+  .axis text { fill: var(--text-muted); font-size: 11px; }
+  .grid line { stroke: var(--grid); stroke-width: 1; }
+  .bar { fill: var(--series-1); pointer-events: none; }
+  .bar.selected { fill: var(--series-1-strong); }
+  .hit { fill: transparent; cursor: pointer; }
+  .hit:focus { outline: none; }
+  .hit:focus-visible + .bar, .bar.hover { opacity: .8; }
+  .value-label { pointer-events: none; fill: var(--text-primary); font-size: 12px; font-weight: 600; }
+  .tooltip {
+    position: absolute; pointer-events: none; background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; font-size: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.12); white-space: nowrap; transform: translate(-50%, -100%);
+  }
+  .tooltip[hidden] { display: none; }
+  details { margin-top: 10px; font-size: 13px; color: var(--text-secondary); }
+  table { border-collapse: collapse; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  td, th { padding: 2px 12px 2px 0; text-align: right; }
+  th { color: var(--text-muted); font-weight: 500; }
+  .caption { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>BikeFlow</h1>
+    <p>Prévision du nombre de vélos loués par heure, selon la date et la météo (Capital Bikeshare, Washington DC).</p>
+  </div>
+  <div class="model-badge" id="model-badge">Modèle : chargement…</div>
+</header>
+
+<main>
+  <form class="card" id="form" novalidate>
+    <h2>Conditions</h2>
+    <div class="examples" id="examples" aria-label="Exemples d'entrées"></div>
+
+    <div class="row">
+      <div>
+        <label for="date">Date</label>
+        <input type="date" id="date" min="2011-01-01" max="2100-12-31" required>
+      </div>
+      <div>
+        <label for="hour">Heure</label>
+        <select id="hour"></select>
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="holiday"> Jour férié</label>
+    <div class="derived" id="derived"></div>
+
+    <label for="weather">Météo</label>
+    <select id="weather">
+      <option value="1">Dégagé, peu nuageux</option>
+      <option value="2">Brume ou nuageux</option>
+      <option value="3">Pluie ou neige légère, orage</option>
+      <option value="4">Forte pluie, grêle, neige épaisse</option>
+    </select>
+
+    <label for="temp">Température <span class="range-value" id="temp-value"></span></label>
+    <input type="range" id="temp" min="-8" max="39" step="1">
+
+    <label for="hum">Humidité <span class="range-value" id="hum-value"></span></label>
+    <input type="range" id="hum" min="0" max="100" step="1">
+
+    <label for="wind">Vent <span class="range-value" id="wind-value"></span></label>
+    <input type="range" id="wind" min="0" max="67" step="1">
+
+    <button type="submit" class="primary">Prédire</button>
+    <div class="error" id="error" role="alert"></div>
+  </form>
+
+  <section class="results">
+    <div class="card">
+      <div class="headline">
+        <div>
+          <div class="hero" id="hero">–</div>
+          <div class="hero-unit" id="hero-unit">vélos loués prévus</div>
+        </div>
+        <div>
+          <div class="stat" id="level">–</div>
+          <div class="stat-label">niveau de demande</div>
+        </div>
+        <div>
+          <div class="stat" id="total">–</div>
+          <div class="stat-label">sur la journée</div>
+        </div>
+        <div>
+          <div class="stat" id="peak">–</div>
+          <div class="stat-label">heure de pointe</div>
+        </div>
+      </div>
+      <div class="notice" id="year-notice" hidden>
+        Le modèle a appris sur 2011–2012 : après 2012, il prédit des niveaux de demande proches de ceux de 2012.
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 id="chart-title">Demande prévue heure par heure</h2>
+      <div class="chart-wrap" id="chart-wrap">
+        <svg id="chart" viewBox="0 0 720 280" role="img" aria-labelledby="chart-title"></svg>
+        <div class="tooltip" id="tooltip" hidden></div>
+      </div>
+      <div class="caption">Cliquez une colonne pour choisir l'heure. Mêmes conditions météo toute la journée.</div>
+      <details>
+        <summary>Voir les valeurs</summary>
+        <table id="table"></table>
+      </details>
+    </div>
+  </section>
+</main>
+
+<script>
+const EXAMPLES = [
+  { label: "Lundi, pointe du matin", date: "2012-06-11", hour: 8, weather: 1, temp: 24, hum: 55, wind: 10 },
+  { label: "Samedi après-midi", date: "2012-06-16", hour: 15, weather: 1, temp: 27, hum: 45, wind: 12 },
+  { label: "Nuit en semaine", date: "2012-03-14", hour: 3, weather: 2, temp: 8, hum: 80, wind: 6 },
+  { label: "Soir pluvieux", date: "2012-11-08", hour: 18, weather: 3, temp: 7, hum: 90, wind: 25 },
+];
+const DAYS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const $ = (id) => document.getElementById(id);
+const fmt = new Intl.NumberFormat("fr-FR");
+let lastDay = null;
+
+for (let h = 0; h < 24; h++) $("hour").add(new Option(`${h} h`, h));
+for (const ex of EXAMPLES) {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.textContent = ex.label;
+  b.addEventListener("click", () => { fill(ex); predict(); });
+  $("examples").append(b);
+}
+
+function fill(ex) {
+  $("date").value = ex.date; $("hour").value = ex.hour; $("weather").value = ex.weather;
+  $("temp").value = ex.temp; $("hum").value = ex.hum; $("wind").value = ex.wind;
+  $("holiday").checked = false;
+  refreshLabels();
+}
+
+function refreshLabels() {
+  $("temp-value").textContent = `${$("temp").value} °C`;
+  $("hum-value").textContent = `${$("hum").value} %`;
+  $("wind-value").textContent = `${$("wind").value} km/h`;
+  const d = parsedDate();
+  if (d) {
+    const working = isWorkingDay(d);
+    $("derived").textContent = `${DAYS[d.getDay()]}, ${working ? "jour travaillé" : "week-end ou férié"}`;
+  }
+}
+
+function parsedDate() {
+  const [y, m, d] = ($("date").value || "").split("-").map(Number);
+  return y ? new Date(y, m - 1, d) : null;
+}
+const isWorkingDay = (d) => d.getDay() >= 1 && d.getDay() <= 5 && !$("holiday").checked;
+
+function payload() {
+  const d = parsedDate();
+  return {
+    year: d.getFullYear(), month: d.getMonth() + 1, weekday: d.getDay(),
+    workingday: isWorkingDay(d) ? 1 : 0, weather_code: Number($("weather").value),
+    temperature_c: Number($("temp").value), humidity_pct: Number($("hum").value),
+    wind_kmh: Number($("wind").value),
+  };
+}
+
+function level(n) {
+  if (n < 100) return "Calme";
+  if (n < 300) return "Modérée";
+  return "Forte";
+}
+
+async function predict() {
+  $("error").textContent = "";
+  const d = parsedDate();
+  if (!d || d.getFullYear() < 2011) { $("error").textContent = "Choisissez une date à partir de 2011."; return; }
+  try {
+    const res = await fetch("predict/day", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload()),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(res.status === 503 ? "Le modèle n'est pas encore prêt, réessayez dans un instant." : JSON.stringify(body.detail));
+    lastDay = body;
+    $("year-notice").hidden = d.getFullYear() <= 2012;
+    render();
+  } catch (e) {
+    $("error").textContent = e.message;
+  }
+}
+
+function render() {
+  if (!lastDay) return;
+  const hour = Number($("hour").value);
+  const values = lastDay.hours.map((h) => h.predicted_rentals);
+  $("hero").textContent = fmt.format(values[hour]);
+  $("hero-unit").textContent = `vélos loués prévus à ${hour} h`;
+  $("level").textContent = level(values[hour]);
+  $("total").textContent = fmt.format(lastDay.total_rentals);
+  $("peak").textContent = `${lastDay.peak_hour} h`;
+  drawChart(values, hour);
+  $("table").innerHTML = "<tr><th>Heure</th><th>Vélos</th></tr>" +
+    values.map((v, h) => `<tr><td>${h} h</td><td>${fmt.format(v)}</td></tr>`).join("");
+}
+
+function niceMax(v) {
+  // Smallest 4-tick axis (step 1, 2, 2.5 or 5 x 10^k) that holds v.
+  if (v <= 0) return 100;
+  const raw = v / 4, pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * pow >= raw) return 4 * m * pow;
+}
+
+function drawChart(values, selected) {
+  const W = 720, H = 280, L = 44, R = 8, T = 26, B = 26;
+  const pw = W - L - R, ph = H - T - B, slot = pw / 24, bw = Math.min(20, slot - 6);
+  const max = niceMax(Math.max(...values) * 1.05);
+  const y = (v) => T + ph - (v / max) * ph;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = $("chart");
+  svg.replaceChildren();
+  const el = (tag, attrs, parent = svg) => {
+    const n = document.createElementNS(ns, tag);
+    for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+    parent.append(n); return n;
+  };
+
+  const grid = el("g", { class: "grid" }), axis = el("g", { class: "axis" });
+  for (let i = 0; i <= 4; i++) {
+    const v = (max / 4) * i, yy = y(v);
+    el("line", { x1: L, x2: W - R, y1: yy, y2: yy }, grid);
+    el("text", { x: L - 8, y: yy + 4, "text-anchor": "end" }, axis).textContent = fmt.format(v);
+  }
+  for (let h = 0; h < 24; h += 3) {
+    el("text", { x: L + slot * h + slot / 2, y: H - 8, "text-anchor": "middle" }, axis).textContent = `${h} h`;
+  }
+
+  values.forEach((v, h) => {
+    const x = L + slot * h + (slot - bw) / 2, top = y(v), base = T + ph;
+    const r = Math.min(4, base - top);
+    const hit = el("rect", {
+      class: "hit", x: L + slot * h, y: T, width: slot, height: ph, tabindex: 0,
+      "aria-label": `${h} h : ${fmt.format(v)} vélos`,
+    });
+    const bar = el("path", {
+      class: "bar" + (h === selected ? " selected" : ""),
+      d: v > 0
+        ? `M${x},${base} V${top + r} Q${x},${top} ${x + r},${top} H${x + bw - r} Q${x + bw},${top} ${x + bw},${top + r} V${base} Z`
+        : `M${x},${base} H${x + bw}`,
+    });
+    const show = () => {
+      bar.classList.add("hover");
+      const tip = $("tooltip"), box = svg.getBoundingClientRect(), k = box.width / W;
+      tip.innerHTML = `<strong>${h} h</strong> · ${fmt.format(v)} vélos`;
+      tip.style.left = `${(x + bw / 2) * k}px`;
+      tip.style.top = `${(top - 6) * k}px`;
+      tip.hidden = false;
+    };
+    const hide = () => { bar.classList.remove("hover"); $("tooltip").hidden = true; };
+    const pick = () => { $("hour").value = h; render(); };
+    hit.addEventListener("mouseenter", show); hit.addEventListener("mouseleave", hide);
+    hit.addEventListener("focus", show); hit.addEventListener("blur", hide);
+    hit.addEventListener("click", pick);
+    hit.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+    if (h === selected) {
+      el("text", { class: "value-label", x: x + bw / 2, y: top - 6, "text-anchor": "middle" }).textContent = fmt.format(v);
+    }
+  });
+}
+
+async function loadModelInfo() {
+  try {
+    const res = await fetch("model-info");
+    if (!res.ok) throw new Error();
+    const info = await res.json();
+    const alias = info.alias ? ` (${info.alias})` : "";
+    $("model-badge").innerHTML = `Modèle : <strong>${info.model_name} ${/^\d+$/.test(info.model_version) ? "v" : ""}${info.model_version}</strong>${alias}`;
+    if (!lastDay) predict();
+  } catch {
+    $("model-badge").textContent = "Modèle : chargement…";
+    setTimeout(loadModelInfo, 3000);
+  }
+}
+
+$("form").addEventListener("submit", (e) => { e.preventDefault(); predict(); });
+$("hour").addEventListener("change", render);
+for (const id of ["temp", "hum", "wind", "date", "holiday"]) $(id).addEventListener("input", refreshLabels);
+
+fill(EXAMPLES[0]);
+loadModelInfo();
+</script>
+</body>
+</html>
