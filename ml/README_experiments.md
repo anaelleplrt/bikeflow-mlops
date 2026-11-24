@@ -11,7 +11,7 @@ https://dagshub.com/manonaubel94-stack/bikeflow-mlops.mlflow
 - production alias: champion
 
 The MLflow URI, username and token are in a local .env file
-(not in Git) and will be added as GitHub secrets.
+(not in Git); GitHub Actions gets them from repository secrets.
 
 ## Metric
 
@@ -169,3 +169,24 @@ registry (24 November 2026, commit 49d8b28 + this change):
 
 The demonstrations on the shared registry use the separate model name
 `bikeflow-demo`, so production keeps serving `bikeflow`.
+
+### Demonstrations on GitHub Actions
+
+Run on 24 November 2026 from `main` (commit 08aa64f) against the shared
+DagsHub registry. The CT runs use the separate model `bikeflow-demo`, so
+production kept serving `bikeflow` version 2 throughout; the rollbacks act on
+production. Times are UTC; the MLflow run names and ids are in the
+`bikeflow` experiment.
+
+| # | Workflow and inputs | Retraining decision | Gates | Champion after | MLflow run |
+|---|---|---|---|---|---|
+| 1 | `ct.yml` v1, candidate | no champion yet: train the initial model | promoted: MAE 90.04 <= floor 93.80 | `bikeflow-demo` v1 | `ct-v1` 4fcfa1e7 (15:42) |
+| 2 | `ct.yml` v2, candidate | new dataset version v2 (champion trained on v1) | promoted: MAE 51.42 <= 85.54 (champion 90.04 minus 5%) | `bikeflow-demo` v2 | `ct-v2` 4ae5d49d (15:45) |
+| 3 | `ct.yml` v2, candidate | same dataset version and no performance drop: no training | not run | `bikeflow-demo` v2 (kept) | `ct-v2` 2c7293e9 (15:49) |
+| 4 | `ct.yml` v2, baseline, forced | forced by the operator | rejected: MAE 91.43 > floor 80.67 (85% of naive 94.91); not registered | `bikeflow-demo` v2 (kept) | `ct-v2` 267c1b24 (15:53) |
+| 5 | `rollback.yml` version 1 | - | version 1 approved | `bikeflow` v1, verified live | `rollback-bikeflow-v1` b9d73221 (15:55) |
+| 6 | `rollback.yml` version 2 | - | version 2 approved | `bikeflow` v2, verified live | `rollback-bikeflow-v2` cd492288 (15:58) |
+
+Each promoted demo version was checked in a container started by the
+workflow (real prediction, expected version). After run 6 the public service
+reported `model_version` 2, loaded at 15:58:43.

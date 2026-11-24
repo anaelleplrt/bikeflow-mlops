@@ -12,7 +12,7 @@ commit and tagged with that commit's SHA.
 |---|---|---|
 | Code, tests, workflows | GitHub `anaelleplrt/bikeflow-mlops` | Branches `feature/*` -> `dev` -> `staging` -> `main` |
 | Images | GHCR `ghcr.io/anaelleplrt/bikeflow-mlops:<commit sha>` | Public package: the image holds no data and no secret |
-| Model registry | DagsHub MLflow, model `bikeflow`, alias `champion` | Only versions tagged `approved=true` are served |
+| Model registry | DagsHub MLflow, model `bikeflow`, alias `champion` | Only versions tagged `approved=true` are served. `bikeflow-demo` is a separate model for controlled CT demos |
 | Training data | Azure Blob Storage `bikeflowmlops01`, container `bikeflow-dvc` | DVC remote, never in the image |
 | Production service | Azure Container Apps, app `bikeflow` in environment `bikeflow-env`, resource group `bikeflow-rg`, France Central | 1 replica, 0.5 vCPU, 1 GiB |
 | Deploy identity | Managed identity `bikeflow-github-deploy` | Contributor on `bikeflow-rg` only, used by Actions through OIDC |
@@ -25,8 +25,12 @@ commit and tagged with that commit's SHA.
 | Push to `staging` (merged PR) | `staging.yml` | Build the release candidate, start it with the shared registry, `tests/smoke_live.py` | Release candidate validated: it becomes ready and serves the current champion |
 | Push to `main` (merged PR) | `deploy.yml` job `build` | Build, start with the shared registry, `tests/smoke_live.py`, push `ghcr.io/...:<sha>` | Only a verified image is pushed |
 | | `deploy.yml` job `deploy` (environment `production`) | Render `deploy/containerapp.yaml`, create or update the app with that image, wait for the revision `bikeflow--<sha7>-<attempt>` to be healthy, `tests/smoke_live.py` on the public URL | Live service checked with a real prediction and the expected model version |
+| Manual, on `main`: dataset version `v1` or `v2` | `ct.yml` | `dvc pull` from Azure, data contract, champion scored, retraining rule, training, quality gates, promotion (`python -m ml.ct`), then `/reload` and `tests/smoke_live.py` on the new version | New champion served, or champion kept with the reason logged; restored automatically if the live check fails |
+| Manual, on `main`: version to restore | `rollback.yml` | `python -m ml.rollback`, `/reload`, `tests/smoke_live.py` on the restored version | Previous approved version served; alias put back if the live check fails |
 
-All three workflows can also be started by hand (`workflow_dispatch`).
+Every workflow can also be started by hand (`workflow_dispatch`). `ct.yml` and
+`rollback.yml` take `model_name`: `bikeflow` is production; any other name is
+a separate registered model, verified in a container started by the workflow.
 
 `tests/smoke_live.py` reads the version that holds `champion` in the registry
 and fails unless `/ready`, `/model-info` and `/predict` all report that
@@ -46,11 +50,13 @@ Nothing environment-specific is in the image. The container reads:
 | `MODEL_LOAD_ATTEMPTS`, `MODEL_LOAD_RETRY_SECONDS` | `5` attempts, 5 s | Start-up retries |
 | `PORT` | default `8000` | Listening port |
 
-GitHub variables: `MLFLOW_TRACKING_URI`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`,
-`AZURE_CONTAINER_ENVIRONMENT`, `AZURE_CONTAINER_APP`.
+GitHub variables: `MLFLOW_TRACKING_URI`, `PRODUCTION_URL`, `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`,
+`AZURE_LOCATION`, `AZURE_CONTAINER_ENVIRONMENT`, `AZURE_CONTAINER_APP`.
 GitHub secrets: `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`,
-`RELOAD_TOKEN`. No Azure credential is stored: Actions signs in with OIDC.
+`RELOAD_TOKEN`, `AZURE_STORAGE_CONNECTION_STRING` (read access to the DVC
+remote for `ct.yml`). No credential for deploying is stored: Actions signs in
+to Azure with OIDC.
 
 ## Reproduce a deployment
 
@@ -114,13 +120,20 @@ must load the new version, in one of two ways:
 Then `python tests/smoke_live.py --url <public url>` checks that the new
 version is served.
 
-**Manual rollback** to a previously approved version (the continuous
-training phase will wrap this in a workflow):
+**Rollback** to a previously approved version: Actions -> Rollback -> Run
+workflow, with the version to restore (`model_name` `bikeflow`). The workflow
+refuses a version that was never approved, moves `champion`, logs a
+`rollback` MLflow run, calls `/reload` and checks the restored version with a
+live prediction. The same by hand:
 
     set -a && source .env && set +a    # DagsHub credentials and RELOAD_TOKEN
-    python -c "from mlflow import MlflowClient; MlflowClient().set_registered_model_alias('bikeflow', 'champion', '1')"
+    python -m ml.rollback --version 1 --reason "why"
     curl -X POST -H "Authorization: Bearer $RELOAD_TOKEN" https://<public url>/reload
     python tests/smoke_live.py --url https://<public url> --expected-version 1
+
+Demonstrated on 24 November 2026: production moved from version 2 to 1
+(MLflow run `rollback-bikeflow-v1`), then back to 2 (`rollback-bikeflow-v2`);
+the service reloaded 11 seconds after the second alias move.
 
 ### If the app does not become ready
 
@@ -129,6 +142,7 @@ training phase will wrap this in a workflow):
 | `/reload` with a version that cannot load or predict | `/reload` returns 503 with the error; the previous model keeps serving and `/ready` stays 200 with the previous version | Move the alias back, or fix the version, then reload |
 | New revision (deploy or restart) cannot load the model | The container retries 5 times, then `/ready` stays 503. The readiness probe fails, so Container Apps sends no traffic to that revision; in single-revision mode the previous healthy revision keeps serving until a new one is ready. `deploy.yml` fails and lists the revisions | Read the logs (`az containerapp logs show -n bikeflow -g bikeflow-rg`), then redeploy a previous commit or move the alias back |
 | Registry unreachable at start-up | Same as above: retries, then not ready | Restart the revision once DagsHub is reachable |
+| `ct.yml` or `rollback.yml`: the new version fails `/reload` or the live check | The step fails; the workflow moves `champion` back to the previous version and reloads, so alias and served model agree again | Read the run summary and the MLflow runs, fix the version before trying again |
 
 ## The twelve factors
 
