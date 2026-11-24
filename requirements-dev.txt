@@ -1,4 +1,6 @@
 -r requirements.txt
+# Full MLflow for training, promotion and the local test registry.
+mlflow>=3.18,<4
 pytest>=8,<10
 httpx>=0.27,<1
 ruff>=0.9,<1
