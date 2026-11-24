@@ -2,6 +2,8 @@
 
 Final-year project for the Machine Learning in Production course at EFREI Paris.
 
+URL: https://bikeflow.delightfulsmoke-399bc548.francecentral.azurecontainerapps.io/
+
 ## Project overview
 
 BikeFlow is a web application that predicts hourly bike rental demand based on weather conditions, date and time.
