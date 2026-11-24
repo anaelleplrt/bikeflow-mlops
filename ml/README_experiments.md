@@ -123,3 +123,49 @@ We did not change the gate values.
 
 Limitation: yr is only 0 or 1 in our data, so for 2013 and later
 the model will predict 2012 levels.
+
+## Continuous training
+
+Workflow `.github/workflows/ct.yml`, started by hand with a dataset version
+(`v1` or `v2`) to simulate a new data delivery. It runs `python -m ml.ct`:
+
+1. Fetch and validate: `dvc pull` of the selected snapshot from Azure, then
+   the data contract (DVC hash of the version, columns, ranges, target,
+   dates, duplicates, row counts, train / validation / test separation).
+   A failure stops the run before the registry is touched.
+2. Evaluate and decide: the champion is scored on the final evaluation set
+   and the retraining rule above is applied (new dataset version, or MAE more
+   than 10% worse than `promotion_test_mae` recorded at its promotion). With
+   no champion, the baseline release is trained.
+3. Train and compare: a candidate is trained on the selected training split
+   and compared with the champion on the same evaluation rows with the
+   quality floor and the minimum improvement (lower MAE is better).
+4. Promote and verify: a passing candidate is registered, tagged
+   `approved=true` and receives `champion`; the workflow calls `/reload` and
+   checks the new version with a live prediction. If that check fails, the
+   previous champion is restored. A failing candidate is not registered and
+   the reason is logged.
+
+Every CT run logs a `ct-<version>` MLflow run with the retraining decision,
+the promotion decision, the previous and new champion versions, the Git
+commit and the DVC hash (`ct_decision.json`).
+
+Rollback: `.github/workflows/rollback.yml` (or `python -m ml.rollback
+--version <n>`) moves `champion` to a previously approved version, logs a
+`rollback` run, refreshes the service and verifies it.
+
+### Rehearsal
+
+The full sequence was replayed with the official data on a local, empty
+registry (24 November 2026, commit 49d8b28 + this change):
+
+| Run | Retraining decision | Gates | Champion after |
+|---|---|---|---|
+| v1, candidate | no champion yet: train | promoted (MAE 90.04 <= floor 93.80) | 1 |
+| v2, candidate | new dataset version v2 | promoted (51.42 <= 85.54) | 2 |
+| v2, candidate | same version, no performance drop: no training | not run | 2 (kept) |
+| v2, baseline, forced | forced by the operator | rejected (91.43 > floor 80.67) | 2 (kept) |
+| rollback to 1 | - | approved version | 1 |
+
+The demonstrations on the shared registry use the separate model name
+`bikeflow-demo`, so production keeps serving `bikeflow`.

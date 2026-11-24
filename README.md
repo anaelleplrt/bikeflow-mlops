@@ -73,15 +73,21 @@ the approved MLflow champion model.
 | `ci.yml` | Pull request to `dev`, `staging` or `main`; manual | Tests, Ruff, Docker build, container smoke test with a deterministic test model. Required check before merging. |
 | `staging.yml` | Push to `staging` (merged PR); manual | Builds the release candidate, starts it with the shared MLflow registry and runs `tests/smoke_live.py`: ready, serves the current `champion` version, real prediction. |
 | `deploy.yml` | Push to `main` (merged PR); manual | Builds the image, verifies it the same way, pushes it to GHCR tagged with the commit SHA, deploys that image to Azure Container Apps from `deploy/containerapp.yaml`, waits for the new revision and runs the live smoke test on the public URL. |
+| `ct.yml` | Manual, input `dataset_version` (`v1`, `v2`), optional `model`, `model_name`, `force_retrain` | Pulls the DVC snapshot from Azure, validates it, scores the champion, applies the retraining rule, trains and compares a candidate, promotes it if it passes the gates, refreshes the service (`/reload`) and verifies the new version with a live prediction. Restores the previous champion if that check fails. |
+| `rollback.yml` | Manual, inputs `version`, `model_name`, `reason` | Moves `champion` to a previously approved version, refreshes the service and verifies it with a live prediction. Puts the alias back if the check fails. |
 
-Continuous training and rollback workflows come in the next phase.
+`model_name` other than `bikeflow` targets a separate registered model for
+controlled demos; the new version is then verified in a container started by
+the workflow instead of the live service.
 
 Deployment settings and secrets (GitHub > Settings > Secrets and variables > Actions):
 
-- variables: `MLFLOW_TRACKING_URI`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+- variables: `MLFLOW_TRACKING_URI`, `PRODUCTION_URL`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
   `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`,
   `AZURE_CONTAINER_ENVIRONMENT`, `AZURE_CONTAINER_APP`
-- secrets: `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, `RELOAD_TOKEN`
+- secrets: `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, `RELOAD_TOKEN`,
+  `AZURE_STORAGE_CONNECTION_STRING` (DVC remote, read by `ct.yml`)
+
 
 GitHub Actions signs in to Azure with OIDC as the managed identity
 `bikeflow-github-deploy` (Contributor on `bikeflow-rg` only), so no Azure
