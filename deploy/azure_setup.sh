@@ -61,10 +61,13 @@ if az containerapp env show --name "$ENVIRONMENT" --resource-group "$RESOURCE_GR
   echo "Environment $ENVIRONMENT already exists"
 else
   # Logs go to the Container Apps console only: no Log Analytics workspace to pay for.
+  # WorkloadProfiles (with the free Consumption profile): recent CLIs default to
+  # "Express" environments, which reject the commit-based revision suffix.
   az containerapp env create \
     --name "$ENVIRONMENT" \
     --resource-group "$RESOURCE_GROUP" \
     --location "$LOCATION" \
+    --environment-mode WorkloadProfiles \
     --logs-destination none \
     --output none
   echo "Environment $ENVIRONMENT created"
