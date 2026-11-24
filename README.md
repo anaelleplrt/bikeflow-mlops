@@ -64,8 +64,27 @@ The workflow runs:
 The CI model is only used for testing. Production will load
 the approved MLflow champion model.
 
-Staging, production deployment and continuous training
-workflows will be added in later project phases.
+## Workflows
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `ci.yml` | Pull request to `dev`, `staging` or `main`; manual | Tests, Ruff, Docker build, container smoke test with a deterministic test model. Required check before merging. |
+| `staging.yml` | Push to `staging` (merged PR); manual | Builds the release candidate, starts it with the shared MLflow registry and runs `tests/smoke_live.py`: ready, serves the current `champion` version, real prediction. |
+| `deploy.yml` | Push to `main` (merged PR); manual | Builds the image, verifies it the same way, pushes it to GHCR tagged with the commit SHA, deploys that image to Azure Container Apps from `deploy/containerapp.yaml`, waits for the new revision and runs the live smoke test on the public URL. |
+
+Continuous training and rollback workflows come in the next phase.
+
+Deployment settings and secrets (GitHub > Settings > Secrets and variables > Actions):
+
+- variables: `MLFLOW_TRACKING_URI`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+  `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`,
+  `AZURE_CONTAINER_ENVIRONMENT`, `AZURE_CONTAINER_APP`
+- secrets: `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, `RELOAD_TOKEN`
+
+GitHub Actions signs in to Azure with OIDC as the managed identity
+`bikeflow-github-deploy` (Contributor on `bikeflow-rg` only), so no Azure
+credential is stored in GitHub. The one-time Azure setup is
+`deploy/azure_setup.sh`.
 
 ## Web application
 

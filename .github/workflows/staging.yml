@@ -1,0 +1,64 @@
+name: Staging
+
+# Validates the release candidate after a merge into staging: the image is
+# built from the merged commit, started by Actions with the shared MLflow
+# registry, and must serve the current champion.
+
+on:
+  push:
+    branches:
+      - staging
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging
+  cancel-in-progress: false
+
+jobs:
+  release-candidate:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE: bikeflow:${{ github.sha }}
+      MODEL_NAME: bikeflow
+      MODEL_ALIAS: champion
+      MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install smoke test dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Build release candidate image
+        run: docker build -t "$IMAGE" .
+
+      - name: Start container with the shared registry
+        run: |
+          docker run -d --name bikeflow-staging \
+            -e MODEL_SOURCE=mlflow \
+            -e MODEL_NAME -e MODEL_ALIAS \
+            -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -p 8000:8000 \
+            "$IMAGE"
+
+      - name: Smoke test the release candidate
+        run: python tests/smoke_live.py --url http://127.0.0.1:8000 --timeout 240
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs bikeflow-staging || true
+
+      - name: Clean up container
+        if: always()
+        run: docker rm -f bikeflow-staging || true
