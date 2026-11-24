@@ -1,0 +1,144 @@
+name: Continuous training
+
+# Simulates a new data delivery: an operator picks a dataset version, the
+# workflow takes over. Steps (see ml/ct.py):
+# 1. fetch the DVC snapshot from Azure and validate it (stops on failure);
+# 2. score the champion on the held-out split and apply the retraining rule;
+# 3. train a candidate and compare it with the champion (quality gates);
+# 4. promote a passing candidate, refresh the service and verify the version
+#    with a live prediction; if the check fails, restore the previous champion.
+#
+# model_name "bikeflow" is production. Any other name (e.g. bikeflow-demo) is a
+# separate registered model for controlled demos, verified in a container
+# started by the workflow instead of the live service.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dataset_version:
+        description: Dataset version to deliver
+        type: choice
+        options: [v1, v2]
+        required: true
+      model:
+        description: Model type to train
+        type: choice
+        options: [candidate, baseline]
+        default: candidate
+      model_name:
+        description: Registered model (bikeflow = production)
+        type: string
+        default: bikeflow
+      force_retrain:
+        description: Train even if the retraining rule says no
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-${{ inputs.model_name }}
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_MODEL: bikeflow
+  MODEL_NAME: ${{ inputs.model_name }}
+  MODEL_ALIAS: champion
+  MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+  PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+  RELOAD_TOKEN: ${{ secrets.RELOAD_TOKEN }}
+
+jobs:
+  continuous-training:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code and dataset tags
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Fetch dataset ${{ inputs.dataset_version }} from Azure (DVC)
+        env:
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          git checkout "data-${{ inputs.dataset_version }}" -- data/current.dvc
+          dvc pull data/current.dvc data/evaluation.dvc
+
+      - name: Validate, decide, train and promote
+        id: ct
+        run: |
+          python -m ml.ct \
+            --data-version "${{ inputs.dataset_version }}" \
+            --model "${{ inputs.model }}" \
+            --model-name "$MODEL_NAME" \
+            ${{ inputs.force_retrain && '--force' || '' }} \
+            --output ct_result.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          result = json.load(open("ct_result.json"))
+          print(f"promoted={str(result['promoted']).lower()}")
+          print(f"new_version={result['new_champion_version'] or ''}")
+          print(f"previous_version={result['previous_champion_version'] or ''}")
+          PY
+
+      - name: Refresh and verify production
+        if: steps.ct.outputs.promoted == 'true' && inputs.model_name == env.PRODUCTION_MODEL
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $RELOAD_TOKEN" "$PRODUCTION_URL/reload"
+          echo
+          python tests/smoke_live.py --url "$PRODUCTION_URL" --expected-version "${{ steps.ct.outputs.new_version }}" --timeout 120
+
+      - name: Verify the new champion in a staging container
+        if: steps.ct.outputs.promoted == 'true' && inputs.model_name != env.PRODUCTION_MODEL
+        run: |
+          docker build -t bikeflow:ct .
+          docker run -d --name bikeflow-ct -e MODEL_SOURCE=mlflow \
+            -e MODEL_NAME -e MODEL_ALIAS \
+            -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -p 8000:8000 bikeflow:ct
+          python tests/smoke_live.py --url http://127.0.0.1:8000 --expected-version "${{ steps.ct.outputs.new_version }}" --timeout 240
+
+      - name: Restore the previous champion if verification failed
+        if: failure() && steps.ct.outputs.promoted == 'true' && steps.ct.outputs.previous_version != ''
+        run: |
+          python -m ml.rollback --model-name "$MODEL_NAME" \
+            --version "${{ steps.ct.outputs.previous_version }}" \
+            --reason "continuous training: version ${{ steps.ct.outputs.new_version }} failed live verification"
+          if [ "$MODEL_NAME" = "$PRODUCTION_MODEL" ]; then
+            curl -fsS -X POST -H "Authorization: Bearer $RELOAD_TOKEN" "$PRODUCTION_URL/reload"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Continuous training: $MODEL_NAME, dataset ${{ inputs.dataset_version }}"
+            echo
+            echo '```json'
+            cat ct_result.json 2>/dev/null || echo '{"result": "stopped before a decision (see the failed step)"}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ct-result-${{ inputs.model_name }}-${{ inputs.dataset_version }}
+          path: ct_result.json
+          if-no-files-found: ignore
+
+      - name: Clean up container
+        if: always()
+        run: docker rm -f bikeflow-ct || true
