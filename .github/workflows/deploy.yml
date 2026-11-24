@@ -1,0 +1,157 @@
+name: Deploy
+
+# Production release after a merge into main:
+# 1. build the image of the merged commit, verify it with the shared registry,
+#    push it to GHCR tagged with the commit SHA;
+# 2. deploy that exact image to Azure Container Apps, wait until the new
+#    revision is ready and run the live smoke test on the public URL.
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  MODEL_NAME: bikeflow
+  MODEL_ALIAS: champion
+  MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install smoke test dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Image name
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image
+        run: docker build -t "${{ steps.name.outputs.image }}" .
+
+      - name: Verify image with the shared registry
+        run: |
+          docker run -d --name bikeflow-verify \
+            -e MODEL_SOURCE=mlflow \
+            -e MODEL_NAME -e MODEL_ALIAS \
+            -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -p 8000:8000 \
+            "${{ steps.name.outputs.image }}"
+          python tests/smoke_live.py --url http://127.0.0.1:8000 --timeout 240
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs bikeflow-verify || true
+
+      - name: Push verified image
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "${{ steps.name.outputs.image }}"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.revision.outputs.url }}
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+      CONTAINER_ENVIRONMENT: ${{ vars.AZURE_CONTAINER_ENVIRONMENT }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      RELOAD_TOKEN: ${{ secrets.RELOAD_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install smoke test dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy image to Azure Container Apps
+        run: |
+          az extension add --name containerapp --upgrade --only-show-errors
+          export REVISION_SUFFIX="${GITHUB_SHA::7}-${GITHUB_RUN_ATTEMPT}"
+          export AZURE_ENVIRONMENT_ID=$(az containerapp env show \
+            --name "$CONTAINER_ENVIRONMENT" --resource-group "$RESOURCE_GROUP" --query id -o tsv)
+
+          # Render the versioned app definition; secrets stay in the runner.
+          spec=$(mktemp --suffix .yaml)
+          trap 'rm -f "$spec"' EXIT
+          envsubst '${AZURE_LOCATION} ${AZURE_ENVIRONMENT_ID} ${REVISION_SUFFIX} ${IMAGE}
+            ${MODEL_NAME} ${MODEL_ALIAS} ${MLFLOW_TRACKING_URI} ${MLFLOW_TRACKING_USERNAME}
+            ${MLFLOW_TRACKING_PASSWORD} ${RELOAD_TOKEN}' < deploy/containerapp.yaml > "$spec"
+
+          if az containerapp show --name "$CONTAINER_APP" --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+            az containerapp update --name "$CONTAINER_APP" --resource-group "$RESOURCE_GROUP" --yaml "$spec" --output none
+          else
+            az containerapp create --name "$CONTAINER_APP" --resource-group "$RESOURCE_GROUP" --yaml "$spec" --output none
+          fi
+
+      - name: Wait for the new revision to be ready
+        id: revision
+        run: |
+          revision="$CONTAINER_APP--${GITHUB_SHA::7}-${GITHUB_RUN_ATTEMPT}"
+          for attempt in $(seq 1 60); do
+            state=$(az containerapp revision show \
+              --name "$CONTAINER_APP" --resource-group "$RESOURCE_GROUP" \
+              --revision "$revision" \
+              --query "{health: properties.healthState, running: properties.runningState}" -o tsv)
+            echo "attempt $attempt: $state"
+            # Unhealthy is expected while the model downloads; only Failed is final.
+            case "$state" in
+              Healthy*) break ;;
+              *Failed*) echo "revision $revision failed"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          case "$state" in Healthy*) ;; *) echo "revision $revision not ready in time"; exit 1 ;; esac
+          fqdn=$(az containerapp show --name "$CONTAINER_APP" --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          echo "url=https://$fqdn" >> "$GITHUB_OUTPUT"
+
+      - name: Live smoke test
+        run: python tests/smoke_live.py --url "${{ steps.revision.outputs.url }}" --timeout 300
+
+      - name: Show revisions on failure
+        if: failure()
+        run: |
+          az containerapp revision list --name "$CONTAINER_APP" --resource-group "$RESOURCE_GROUP" \
+            --query "[].{name: name, active: properties.active, health: properties.healthState, traffic: properties.trafficWeight, image: properties.template.containers[0].image}" \
+            -o table || true
