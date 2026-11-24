@@ -49,4 +49,24 @@ with urlopen(request) as response:
         "model_version": "ci-test-1",
     }
 
+
+del payload["hour"]
+request = Request(
+    f"{base_url}/predict/day",
+    data=json.dumps(payload).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+
+with urlopen(request) as response:
+    day = json.load(response)
+    assert [row["predicted_rentals"] for row in day["hours"]] == [123] * 24
+    assert day["total_rentals"] == 123 * 24
+    assert day["model_version"] == "ci-test-1"
+
+
+with urlopen(f"{base_url}/") as response:
+    assert response.headers["Content-Type"].startswith("text/html")
+    assert "BikeFlow" in response.read().decode()
+
 print("Docker smoke test passed")

@@ -26,7 +26,7 @@ The `casual` and `registered` columns will not be used as model inputs to avoid 
 - GitHub Actions
 - DVC with Azure Blob Storage
 - MLflow and Model Registry
-- Web API and frontend (to be implemented)
+- FastAPI web app with an HTML interface
 
 ## Git workflow
 
@@ -66,3 +66,46 @@ the approved MLflow champion model.
 
 Staging, production deployment and continuous training
 workflows will be added in later project phases.
+
+## Web application
+
+The service loads the MLflow model version that holds the `champion` alias
+of the registered model `bikeflow`. The alias is resolved to a version number
+at start-up (and on `/reload`); only versions tagged `approved=true` are
+served. Loading runs in the background: `/health` answers at once, `/ready`
+returns 503 until the model has passed a warm-up prediction.
+
+| Route | Purpose |
+|---|---|
+| `GET /` | Web interface: date, hour and weather in, predicted rentals and the 24-hour curve out |
+| `POST /predict` | Prediction for one hour |
+| `POST /predict/day` | Predictions for the 24 hours of a day |
+| `GET /model-info` | Loaded model: name, version, alias, run id, dataset version |
+| `GET /ready` | 200 once the approved model can predict, 503 before |
+| `GET /health` | Liveness |
+| `POST /reload` | Re-resolve the alias and swap the model (`Authorization: Bearer $RELOAD_TOKEN`); the previous model keeps serving if the new one fails |
+
+Inputs: `year` (2011+), `month`, `hour`, `weekday` (0 = Sunday),
+`workingday`, `weather_code` (1 clear to 4 heavy rain), `temperature_c`
+(-8 to 39), `humidity_pct`, `wind_kmh` (0 to 67). The model learned on
+2011-2012: later years are predicted at 2012 levels.
+
+### Sample inputs
+
+| Case | Payload for `POST /predict` |
+|---|---|
+| Monday morning rush | `{"year": 2012, "month": 6, "hour": 8, "weekday": 1, "workingday": 1, "weather_code": 1, "temperature_c": 24, "humidity_pct": 55, "wind_kmh": 10}` |
+| Saturday afternoon | `{"year": 2012, "month": 6, "hour": 15, "weekday": 6, "workingday": 0, "weather_code": 1, "temperature_c": 27, "humidity_pct": 45, "wind_kmh": 12}` |
+| Weekday night | `{"year": 2012, "month": 3, "hour": 3, "weekday": 3, "workingday": 1, "weather_code": 2, "temperature_c": 8, "humidity_pct": 80, "wind_kmh": 6}` |
+| Rainy evening | `{"year": 2012, "month": 11, "hour": 18, "weekday": 4, "workingday": 1, "weather_code": 3, "temperature_c": 7, "humidity_pct": 90, "wind_kmh": 25}` |
+
+### Run locally
+
+    cp .env.example .env   # then fill in the DagsHub credentials
+    set -a && source .env && set +a
+    uvicorn app.main:app --reload
+
+Settings (environment variables): `MODEL_SOURCE` (`mlflow` by default, `ci`
+for the CI test model), `MODEL_NAME`, `MODEL_ALIAS`, `MLFLOW_TRACKING_URI`,
+`MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, `RELOAD_TOKEN`,
+`MODEL_LOAD_ATTEMPTS`, `MODEL_LOAD_RETRY_SECONDS`, `PORT`.
