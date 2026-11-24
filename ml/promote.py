@@ -3,6 +3,7 @@
 Usage:
 
     python -m ml.promote --run-id <candidate run id> --data-version v1
+    python -m ml.promote --run-id <id> --data-version v2 --model-name bikeflow-demo
 
 Both models are scored on the same final evaluation rows
 (data/evaluation/test.csv). The decision is logged as its own MLflow run.
@@ -18,7 +19,7 @@ from mlflow.exceptions import MlflowException
 
 from ml.data import FEATURES, TARGET, load_dataset
 from ml.gates import decide_promotion, naive_mae, regression_metrics
-from ml.train import EXPERIMENT
+from ml.train import EXPERIMENT, git_info
 
 MODEL_NAME = "bikeflow"
 ALIAS = "champion"
@@ -92,7 +93,9 @@ def promote(run_id, data_version, model_name=MODEL_NAME, dry_run=False):
     mlflow.set_experiment(EXPERIMENT)
     with mlflow.start_run(run_name=f"promotion-{data_version}"):
         mlflow.set_tags({
+            **git_info(),
             "run_type": "promotion",
+            "model_name": model_name,
             "decision": summary["decision"],
             "candidate_run_id": run_id,
             "previous_champion_version": str(summary["previous_champion_version"]),
@@ -112,9 +115,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--data-version", required=True, choices=["v1", "v2"])
+    parser.add_argument("--model-name", default=MODEL_NAME, help="registered model (a separate name for demos)")
     parser.add_argument("--dry-run", action="store_true", help="decide without registering")
     args = parser.parse_args()
-    promote(args.run_id, args.data_version, dry_run=args.dry_run)
+    promote(args.run_id, args.data_version, model_name=args.model_name, dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

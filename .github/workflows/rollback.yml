@@ -1,0 +1,111 @@
+name: Rollback
+
+# Moves the champion alias back to a previously approved version, refreshes
+# the service and verifies the restored version with a live prediction.
+# If the verification fails, the alias goes back to where it was.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Approved registry version to restore (e.g. 1)
+        type: string
+        required: true
+      model_name:
+        description: Registered model (bikeflow = production)
+        type: string
+        default: bikeflow
+      reason:
+        description: Why (logged in MLflow)
+        type: string
+        default: manual rollback
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-${{ inputs.model_name }}
+  cancel-in-progress: false
+
+env:
+  PRODUCTION_MODEL: bikeflow
+  MODEL_NAME: ${{ inputs.model_name }}
+  MODEL_ALIAS: champion
+  MLFLOW_TRACKING_URI: ${{ vars.MLFLOW_TRACKING_URI }}
+  MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+  PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+  RELOAD_TOKEN: ${{ secrets.RELOAD_TOKEN }}
+  # Free-text inputs reach the shell only through variables (no injection).
+  TARGET_VERSION: ${{ inputs.version }}
+  REASON: ${{ inputs.reason }}
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Move the champion alias
+        id: alias
+        run: |
+          python -m ml.rollback --model-name "$MODEL_NAME" --version "$TARGET_VERSION" \
+            --reason "$REASON" --output rollback.json
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          result = json.load(open("rollback.json"))
+          print(f"changed={str(result['changed']).lower()}")
+          print(f"previous_version={result['previous_version'] or ''}")
+          PY
+
+      - name: Refresh and verify production
+        if: inputs.model_name == env.PRODUCTION_MODEL
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $RELOAD_TOKEN" "$PRODUCTION_URL/reload"
+          echo
+          python tests/smoke_live.py --url "$PRODUCTION_URL" --expected-version "$TARGET_VERSION" --timeout 120
+
+      - name: Verify in a staging container
+        if: inputs.model_name != env.PRODUCTION_MODEL
+        run: |
+          docker build -t bikeflow:rollback .
+          docker run -d --name bikeflow-rollback -e MODEL_SOURCE=mlflow \
+            -e MODEL_NAME -e MODEL_ALIAS \
+            -e MLFLOW_TRACKING_URI -e MLFLOW_TRACKING_USERNAME -e MLFLOW_TRACKING_PASSWORD \
+            -p 8000:8000 bikeflow:rollback
+          python tests/smoke_live.py --url http://127.0.0.1:8000 --expected-version "$TARGET_VERSION" --timeout 240
+
+      - name: Put the alias back if verification failed
+        if: failure() && steps.alias.outputs.changed == 'true' && steps.alias.outputs.previous_version != ''
+        run: |
+          python -m ml.rollback --model-name "$MODEL_NAME" \
+            --version "${{ steps.alias.outputs.previous_version }}" \
+            --reason "rollback to $TARGET_VERSION failed verification"
+          if [ "$MODEL_NAME" = "$PRODUCTION_MODEL" ]; then
+            curl -fsS -X POST -H "Authorization: Bearer $RELOAD_TOKEN" "$PRODUCTION_URL/reload"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Rollback: $MODEL_NAME to version $TARGET_VERSION"
+            echo
+            echo '```json'
+            cat rollback.json 2>/dev/null || echo '{"result": "refused (see the failed step)"}'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Clean up container
+        if: always()
+        run: docker rm -f bikeflow-rollback || true
