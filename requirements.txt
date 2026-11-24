@@ -1,5 +1,9 @@
+# Serving only: the image installs this file.
 fastapi>=0.115,<1
 uvicorn>=0.30,<1
-mlflow>=3,<4
+mlflow-skinny>=3.18,<4
 pandas>=2.2,<3
-scikit-learn>=1.5,<2
+# Same versions as the registered models (MLflow requirements.txt),
+# so skops can load them.
+scikit-learn==1.9.1
+skops==0.16.0
