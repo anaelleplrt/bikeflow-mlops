@@ -76,12 +76,15 @@ Continuous training and rollback workflows come in the next phase.
 
 Deployment settings and secrets (GitHub > Settings > Secrets and variables > Actions):
 
-- variables: `MLFLOW_TRACKING_URI`, `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`,
+- variables: `MLFLOW_TRACKING_URI`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+  `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`,
   `AZURE_CONTAINER_ENVIRONMENT`, `AZURE_CONTAINER_APP`
-- secrets: `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`,
-  `RELOAD_TOKEN`, `AZURE_CREDENTIALS`
+- secrets: `MLFLOW_TRACKING_USERNAME`, `MLFLOW_TRACKING_PASSWORD`, `RELOAD_TOKEN`
 
-The one-time Azure setup is `deploy/azure_setup.sh`.
+GitHub Actions signs in to Azure with OIDC as the managed identity
+`bikeflow-github-deploy` (Contributor on `bikeflow-rg` only), so no Azure
+credential is stored in GitHub. The one-time Azure setup is
+`deploy/azure_setup.sh`.
 
 ## Web application
 
