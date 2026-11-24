@@ -56,7 +56,7 @@ v2:
 The final evaluation data must not be used for training
 or hyperparameter tuning.
 
-The champion and candidate will be compared on the same
+The champion and candidate are compared on the same
 final evaluation observations.
 
 
@@ -126,5 +126,7 @@ development branch before continuing work.
 Azure credentials are configured locally and must
 never be committed to GitHub.
 
-GitHub Actions will need separate Azure credentials
-for continuous training.
+The continuous training workflow (.github/workflows/ct.yml) pulls the
+selected snapshot with the repository secret AZURE_STORAGE_CONNECTION_STRING.
+Locally, put the connection string in .env between quotes (it contains
+";"), as AZURE_STORAGE_CONNECTION_STRING="...".

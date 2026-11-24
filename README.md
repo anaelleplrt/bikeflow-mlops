@@ -4,6 +4,10 @@ Final-year project for the Machine Learning in Production course at EFREI Paris.
 
 URL: https://bikeflow.delightfulsmoke-399bc548.francecentral.azurecontainerapps.io/
 
+Sample inputs: see [Sample inputs](#sample-inputs). Deployment, triggers and
+rollback: [DEPLOYMENT.md](DEPLOYMENT.md). Data and experiments:
+[ml/README_data.md](ml/README_data.md), [ml/README_experiments.md](ml/README_experiments.md).
+
 ## Project overview
 
 BikeFlow is a web application that predicts hourly bike rental demand based on weather conditions, date and time.
@@ -43,7 +47,8 @@ All changes must go through reviewed pull requests:
 
 `feature/*` -> `dev` -> `staging` -> `main`
 
-Automated CI checks will be required before merging.
+`dev`, `staging` and `main` are protected: a pull request and a passing CI
+check are required before merging.
 
 ## Team
 
@@ -63,8 +68,8 @@ The workflow runs:
 - Docker image build
 - Container smoke test using a deterministic test model
 
-The CI model is only used for testing. Production will load
-the approved MLflow champion model.
+The CI model is only used for testing. Production loads the
+approved MLflow champion model.
 
 ## Workflows
 
