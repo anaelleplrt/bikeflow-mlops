@@ -83,20 +83,19 @@ principal_id=$(az identity show --name "$IDENTITY" --resource-group "$RESOURCE_G
 
 # Trust GitHub tokens from this repository only: the deploy job (environment
 # production) and workflows run from main (continuous training, rollback).
-for entry in "github-production|repo:$REPOSITORY:environment:production" \
-             "github-main|repo:$REPOSITORY:ref:refs/heads/main"; do
+# GitHub's OIDC subject names the owner and repository with their numeric ids
+# (owner@id/repo@id); both ids are on https://api.github.com/repos/<owner>/<repo>.
+# create also updates an existing credential, so the script can be re-run.
+SUBJECT_PREFIX="${GITHUB_OIDC_SUBJECT_PREFIX:-repo:anaelleplrt@128377927/bikeflow-mlops@1464646886}"
+for entry in "github-production|$SUBJECT_PREFIX:environment:production" \
+             "github-main|$SUBJECT_PREFIX:ref:refs/heads/main"; do
   name="${entry%%|*}"
   subject="${entry#*|}"
-  if az identity federated-credential show --name "$name" --identity-name "$IDENTITY" \
-       --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
-    echo "Federated credential $name already exists"
-  else
-    az identity federated-credential create --name "$name" --identity-name "$IDENTITY" \
-      --resource-group "$RESOURCE_GROUP" \
-      --issuer https://token.actions.githubusercontent.com \
-      --subject "$subject" --audiences api://AzureADTokenExchange --output none
-    echo "Federated credential $name created for $subject"
-  fi
+  az identity federated-credential create --name "$name" --identity-name "$IDENTITY" \
+    --resource-group "$RESOURCE_GROUP" \
+    --issuer https://token.actions.githubusercontent.com \
+    --subject "$subject" --audiences api://AzureADTokenExchange --output none
+  echo "Federated credential $name trusts $subject"
 done
 
 # Contributor on the resource group only. A new identity can take a minute to
