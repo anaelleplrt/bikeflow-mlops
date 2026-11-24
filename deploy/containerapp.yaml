@@ -1,0 +1,73 @@
+# Azure Container Apps definition of the BikeFlow service.
+# Rendered with envsubst by .github/workflows/deploy.yml: every placeholder is
+# filled from the workflow environment (GitHub variables and secrets), never from Git.
+location: ${AZURE_LOCATION}
+properties:
+  managedEnvironmentId: ${AZURE_ENVIRONMENT_ID}
+  configuration:
+    # One active revision: a new revision takes the traffic only once its
+    # readiness probe passes; if it never does, the previous one keeps serving.
+    activeRevisionsMode: Single
+    ingress:
+      external: true
+      targetPort: 8000
+      transport: auto
+      allowInsecure: false
+    secrets:
+      - name: mlflow-username
+        value: ${MLFLOW_TRACKING_USERNAME}
+      - name: mlflow-password
+        value: ${MLFLOW_TRACKING_PASSWORD}
+      - name: reload-token
+        value: ${RELOAD_TOKEN}
+  template:
+    revisionSuffix: ${REVISION_SUFFIX}
+    containers:
+      - name: bikeflow
+        image: ${IMAGE}
+        resources:
+          cpu: 0.5
+          memory: 1Gi
+        env:
+          - name: MODEL_SOURCE
+            value: mlflow
+          - name: MODEL_NAME
+            value: ${MODEL_NAME}
+          - name: MODEL_ALIAS
+            value: ${MODEL_ALIAS}
+          - name: MLFLOW_TRACKING_URI
+            value: ${MLFLOW_TRACKING_URI}
+          - name: MLFLOW_TRACKING_USERNAME
+            secretRef: mlflow-username
+          - name: MLFLOW_TRACKING_PASSWORD
+            secretRef: mlflow-password
+          - name: RELOAD_TOKEN
+            secretRef: reload-token
+          - name: MODEL_LOAD_ATTEMPTS
+            value: "5"
+        probes:
+          # Liveness only checks the process; it must not depend on the model.
+          - type: Liveness
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 30
+          # Ready only once the approved model has passed a warm-up prediction.
+          - type: Readiness
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 3
+          # Allow up to 5 minutes for the start-up model download.
+          - type: Startup
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 30
+            failureThreshold: 10
+    # One replica: /reload then refreshes the whole service.
+    scale:
+      minReplicas: 1
+      maxReplicas: 1
